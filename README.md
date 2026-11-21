@@ -30,7 +30,7 @@ The network part (`src/gamenet.h`, `src/gamenet.cpp`) is a small reusable 1 vs 1
 ## Build
 Native Qt 4.7 / QML launcher (no Python), cross-built with clang for ARMv7 hard-float against the Harmattan libraries: see `build.sh` and `packaging/make-deb.sh`. Sounds: `tools/make-ship-sounds.py`; icon: `tools/meeships-icon.py`.
 
-The arcade digits use the Press Start 2P font by CodeMan38 (SIL Open Font License 1.1, `qml/fonts/`).
+The arcade digits use the Press Start 2P font (© The Press Start 2P Project Authors, SIL Open Font License 1.1, `qml/fonts/`).
 
 ## Credits
 Designed and written by Claude (Anthropic) together with [smyhu](https://github.com/smyhu) for the Nokia N9.
