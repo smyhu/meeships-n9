@@ -45,7 +45,8 @@ Page {
     property int aimEnemy: -1
     property int aimMine: -1
     property bool blink: true
-    property bool askQuit: false
+    property bool askQuit: false        // in-game menu (hamburger) open
+    property bool confirmQuit: false
     property bool peerAgain: false
     property bool askReset: false
 
@@ -205,12 +206,22 @@ Page {
     // my shot
     function tapEnemy(i) {
         if (screen != "play" || over || !myTurn || busy || askQuit) return
+        if (mode == "net" && net.reconnecting) return
         if (St.view.marks[i] != 0) return
         busy = true
         aimEnemy = i
-        sfx("shot")
-        if (mode == "ai") shotTimer.restart()
-        else net.send(JSON.stringify({ t: "shot", i: i }))
+        if (mode == "ai") { sfx("shot"); shotTimer.restart() }
+        else {
+            // Wi-Fi: the shot sounds only when the other phone has answered (automatically)
+            net.send(JSON.stringify({ t: "shot", i: i }))
+            waitTimer.restart()
+        }
+    }
+    Timer { id: waitTimer; interval: 1500; onTriggered: if (page.busy) page.status2 = page.tr("waitShot") }
+    property variant pendRes: null
+    Timer {
+        id: netResTimer; interval: 150
+        onTriggered: { var m = page.pendRes; page.myResult(m.i, m.r, m.ship, m.over === true) }
     }
     Timer {
         id: shotTimer; interval: 380
@@ -246,7 +257,8 @@ Page {
     Timer {
         id: aiTimer; interval: 750
         onTriggered: {
-            if (page.over || page.screen != "play" && page.screen != "menu") return
+            if (page.over || !page.inGame) return
+            if (page.askQuit || page.screen != "play") { aiTimer.restart(); return }   // wait while a menu is open
             var i = G.aiShot(St.aiView, page.aiLevel)
             page.aimMine = i
             aiFire.restart()
@@ -316,6 +328,8 @@ Page {
             page.sfx("crash")
         }
         onMessage: page.netMessage(text)
+        onLinkLost: { page.lostAt = new Date().getTime(); page.lostLeft = net.resumeSeconds; page.sfx("crash") }
+        onResumed: { page.showToast(page.tr("linkBack")); page.sfx("bonus") }
         onPeerLeft: {
             var wasPlaying = page.screen == "play" || page.screen == "setup"
             aiTimer.stop()
@@ -368,7 +382,13 @@ Page {
             net.send(JSON.stringify({ t: "res", i: m.i, r: res.r, ship: res.ship ? { x: res.ship.x, y: res.ship.y, len: res.ship.len, h: res.ship.h } : null, over: res.over === true }))
             incoming(m.i, res.r, res.over === true)
         }
-        else if (m.t == "res") { if (busy) myResult(m.i, m.r, m.ship, m.over === true) }
+        else if (m.t == "res") {
+            if (!busy || m.i != aimEnemy || netResTimer.running) return
+            waitTimer.stop()
+            pendRes = m
+            sfx("shot")
+            netResTimer.restart()
+        }
         else if (m.t == "reveal") {
             var shown = [], k
             for (k = 0; k < m.ships.length; k++) {
@@ -390,10 +410,17 @@ Page {
         startSetup()
     }
 
+    property double lostAt: 0
+    property int lostLeft: 0
+    property bool netDown: page.mode == "net" && net.reconnecting && (page.screen == "play" || page.screen == "setup")
+    Timer {
+        interval: 1000; repeat: true; running: page.netDown
+        onTriggered: page.lostLeft = Math.max(0, net.resumeSeconds - Math.floor((new Date().getTime() - page.lostAt) / 1000))
+    }
     property bool toastOn: false
     function showToast(t) { toast = t; toastOn = true; toastTimer.restart() }
     Timer { id: toastTimer; interval: 3500; onTriggered: page.toastOn = false }
-    Timer { interval: 300; repeat: true; running: page.aimEnemy >= 0 || page.aimMine >= 0 || page.screen == "wifi"; onTriggered: page.blink = !page.blink }
+    Timer { interval: 300; repeat: true; running: page.aimEnemy >= 0 || page.aimMine >= 0 || page.screen == "wifi" || page.netDown; onTriggered: page.blink = !page.blink }
 
     Component.onCompleted: loadAll()
 
@@ -556,7 +583,7 @@ Page {
             MouseArea { id: menuArea; anchors.fill: parent; anchors.margins: -8
                 onClicked: {
                     if (page.over) { if (page.mode == "net") page.quitGame(); else page.screen = "menu"; return }
-                    if (page.mode == "ai") page.screen = "menu"; else page.askQuit = true
+                    page.confirmQuit = false; page.askQuit = true
                 } }
         }
 
@@ -639,16 +666,40 @@ Page {
             }
         }
 
-        // leaving a Wi-Fi game
+        // in-game menu: back to the game, sound, main menu (solo), end game
         Rectangle {
+            anchors.fill: parent
             visible: page.askQuit
+            color: "#99000000"
+            MouseArea { anchors.fill: parent; onClicked: { page.askQuit = false; page.confirmQuit = false } }
+        }
+        Rectangle {
+            visible: page.askQuit && !page.confirmQuit
+            x: 30; y: 200; width: 420; height: page.mode == "ai" ? 410 : 340
+            color: "#0c120a"; border.width: 2; border.color: "#E7FFCD"
+            MouseArea { anchors.fill: parent }
+            Column {
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: 26; spacing: 14
+                PixelText { anchors.horizontalCenter: parent.horizontalCenter; text: tr("menu"); pixelSize: 4 }
+                PixelButton { width: 360; text: tr("resume"); onClicked: page.askQuit = false }
+                PixelButton { width: 360; text: tr("sound") + " " + (page.sound ? tr("on") : tr("off"))
+                    onClicked: { page.sound = !page.sound; helper.setSetting("sound", page.sound); page.sfx("eat") } }
+                PixelButton { width: 360; visible: page.mode == "ai"; text: tr("mainMenu")
+                    onClicked: { page.askQuit = false; page.screen = "menu" } }
+                PixelButton { width: 360; text: tr("endGame"); onClicked: page.confirmQuit = true }
+            }
+        }
+        // end the game?
+        Rectangle {
+            visible: page.askQuit && page.confirmQuit
             x: 40; y: 300; width: 400; height: 220
             color: "#0c120a"; border.width: 2; border.color: "#E7FFCD"
             PixelText { anchors.horizontalCenter: parent.horizontalCenter; y: 34; text: tr("quitAsk"); pixelSize: 3 }
             Row {
                 anchors.horizontalCenter: parent.horizontalCenter; y: 110; spacing: 16
                 PixelButton { width: 160; text: tr("yes"); onClicked: page.quitGame() }
-                PixelButton { width: 160; text: tr("no"); onClicked: page.askQuit = false }
+                PixelButton { width: 160; text: tr("no"); onClicked: page.confirmQuit = false }
             }
         }
     }
@@ -806,6 +857,26 @@ Page {
             }
         }
         PixelButton { anchors.horizontalCenter: parent.horizontalCenter; y: 770; text: tr("back"); onClicked: page.screen = "menu" }
+    }
+
+    // Wi-Fi dropped during a match: the game is kept and the phones reconnect by themselves
+    Rectangle {
+        anchors.fill: parent
+        visible: page.netDown
+        color: "#cc000000"
+        MouseArea { anchors.fill: parent }
+        Rectangle {
+            x: 20; y: 260; width: 440; height: 300
+            color: "#0c120a"; border.width: 2; border.color: "#ff7a6a"
+            Column {
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: 30; spacing: 22
+                PixelText { anchors.horizontalCenter: parent.horizontalCenter; text: tr("linkDown"); pixelSize: 3; color: "#ff7a6a" }
+                PixelText { anchors.horizontalCenter: parent.horizontalCenter; text: tr("relinking") + (page.blink ? " ..." : "    "); pixelSize: 2; color: "#E7FFCD" }
+                Text { anchors.horizontalCenter: parent.horizontalCenter; text: String(page.lostLeft); font.family: arcade.name; font.pixelSize: 24; color: "#cfeca0" }
+                PixelButton { anchors.horizontalCenter: parent.horizontalCenter; width: 320; text: tr("endGame"); onClicked: page.quitGame() }
+            }
+        }
     }
 
     // short notices (connection lost, invitation declined ...)

@@ -2,7 +2,7 @@
 # make-deb.sh - builds meeships-n9_<VER>_armel.deb from build/meeships-n9 + qml/ + packaging/
 set -e
 D=$(cd "$(dirname "$0")/.." && pwd)
-VER=${VER:-0.1.2}
+VER=${VER:-0.1.5}
 OUTDIR=${OUTDIR:-$D/dist}
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 P=$T/data; mkdir -p $P/opt/meeships-n9/bin $P/opt/meeships-n9/qml $P/usr/share/applications $P/usr/share/icons/hicolor/80x80/apps $P/usr/share/doc/meeships-n9 $T/ctl
